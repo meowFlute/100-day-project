@@ -1,6 +1,9 @@
 # Test file outputs
 *.png
 
+# program outputs
+*.pdf
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

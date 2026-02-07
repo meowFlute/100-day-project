@@ -13,6 +13,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import math
+import shutil
 
 
 @dataclass
@@ -25,6 +26,8 @@ class PaperSize:
 
 # Standard paper sizes
 PAPER_SIZES = {
+    "40x60 Poster (US)": PaperSize("40x60 Poster (US)", 40, 60),
+    "20x30 Poster (US)": PaperSize("20x30 Poster (US)", 20, 30),
     "Letter (US)": PaperSize("Letter (US)", 8.5, 11),
     "Legal (US)": PaperSize("Legal (US)", 8.5, 14),
     "Tabloid (US)": PaperSize("Tabloid (US)", 11, 17),
@@ -143,8 +146,24 @@ class FingerprintRainbow:
         height = total_radius  # Half circle
         return width, height
     
+    def get_band_radii(self) -> List[Tuple[str, float, float, float]]:
+        """
+        Get the inner, middle, and outer radii for each band
+        
+        Returns:
+            List of (color, inner_radius, mid_radius, outer_radius) tuples
+        """
+        radii = []
+        for band_idx, color in enumerate(self.COLORS):
+            band_from_center = 6 - band_idx
+            mid_radius = self.band_spacing / 2 + band_from_center * self.band_spacing
+            inner_radius = mid_radius - self.fp_width / 2
+            outer_radius = mid_radius + self.fp_width / 2
+            radii.append((color, inner_radius, mid_radius, outer_radius))
+        return radii
+    
     def render(self, ax: plt.Axes, paper_width: float, paper_height: float, 
-               margin: float, orientation: str = "portrait"):
+               margin: float, orientation: str = "portrait", show_radii: bool = False):
         """
         Render the rainbow visualization on a matplotlib axes
         
@@ -154,6 +173,7 @@ class FingerprintRainbow:
             paper_height: Paper height in inches
             margin: Margin size in inches
             orientation: "portrait" or "landscape"
+            show_radii: If True, show radius measurements on the visualization
         """
         ax.clear()
         ax.set_aspect('equal')
@@ -201,6 +221,22 @@ class FingerprintRainbow:
                          edgecolor='black', linewidth=0.5)
             ax.add_patch(wedge)
             
+            # Show radii if requested
+            if show_radii:
+                # Draw radius line from center to right edge
+                line_angle = 0  # Horizontal right
+                line_x = center_x + mid_radius * math.cos(line_angle)
+                line_y = center_y + mid_radius * math.sin(line_angle)
+                ax.plot([center_x, line_x], [center_y, line_y], 
+                       color=color, linewidth=1.5, linestyle='-', alpha=0.7)
+                
+                # Add radius label
+                label_x = center_x + (mid_radius * 0.5) * math.cos(line_angle)
+                label_y = center_y + (mid_radius * 0.5) * math.sin(line_angle) + 0.1
+                ax.text(label_x, label_y, f'{mid_radius:.2f}"', 
+                       fontsize=8, ha='center', va='bottom',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor=color))
+            
             # Place fingerprints on this band, tangent to each other
             if num_prints > 0:
                 for i in range(num_prints):
@@ -234,7 +270,10 @@ class FingerprintRainbow:
         
         # Add title with allocation info
         allocation_str = " | ".join([f"{c[:3]}: {n}" for c, n in zip(self.COLORS, self.allocations)])
-        ax.set_title(f"Fingerprint Rainbow (Band Spacing: {self.band_spacing_percent:.0f}%, Min Inner: {self.min_inner_prints}) - {allocation_str}", 
+        title_str = f"Fingerprint Rainbow (Band Spacing: {self.band_spacing_percent:.0f}%, Min Inner: {self.min_inner_prints})"
+        if show_radii:
+            title_str += " - Radii Shown"
+        ax.set_title(f"{title_str}\n{allocation_str}", 
                     fontsize=9, pad=10)
         
         # Remove axes
@@ -265,6 +304,9 @@ class FingerprintRainbowGUI:
         # Paper orientation
         self.orientation_var = tk.StringVar(value="portrait")
         
+        # Show radii on visualization
+        self.show_radii_var = tk.BooleanVar(value=False)
+        
         # Paper size variables
         self.paper_size_var = tk.StringVar(value="Letter (US)")
         self.paper_width_var = tk.StringVar(value="8.5")
@@ -292,9 +334,34 @@ class FingerprintRainbowGUI:
         # Set up proper window close handling
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         
-        # Left panel - Controls
-        control_frame = ttk.LabelFrame(main_frame, text="Controls", padding="10")
-        control_frame.grid(row=0, column=0, rowspan=2, sticky=(tk.N, tk.S, tk.W), padx=(0, 10))
+        # Left panel - Controls with scrollbar
+        control_container = ttk.Frame(main_frame)
+        control_container.grid(row=0, column=0, rowspan=2, sticky=(tk.N, tk.S, tk.W), padx=(0, 10))
+        
+        # Create canvas and scrollbar for scrolling
+        canvas = tk.Canvas(control_container, width=280, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(control_container, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Enable mousewheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        # Build controls inside scrollable frame
+        control_frame = ttk.LabelFrame(scrollable_frame, text="Controls", padding="10")
+        control_frame.pack(fill="both", expand=True)
         
         self._build_controls(control_frame)
         
@@ -475,6 +542,23 @@ class FingerprintRainbowGUI:
                                                pady=10, sticky=tk.W+tk.E)
         row += 1
         
+        # Show radii checkbox
+        ttk.Checkbutton(parent, text="Show circle radii", 
+                       variable=self.show_radii_var,
+                       command=self._on_show_radii_changed).grid(row=row, column=0, columnspan=2, 
+                                                                 sticky=tk.W, pady=2)
+        row += 1
+        
+        # Construction sheet button
+        ttk.Button(parent, text="Generate Construction Sheet", 
+                  command=self._generate_construction_sheet).grid(row=row, column=0, columnspan=2, 
+                                                                  pady=5, sticky=tk.W+tk.E)
+        row += 1
+        
+        ttk.Separator(parent, orient='horizontal').grid(row=row, column=0, columnspan=2, 
+                                                        sticky=tk.W+tk.E, pady=10)
+        row += 1
+        
         # Info display
         self.info_frame = ttk.LabelFrame(parent, text="Rainbow Info", padding="5")
         self.info_frame.grid(row=row, column=0, columnspan=2, sticky=tk.W+tk.E, pady=10)
@@ -496,6 +580,23 @@ class FingerprintRainbowGUI:
     def _on_spacing_changed(self, value):
         """Update spacing label when slider changes"""
         self.spacing_label.config(text=f"{self.band_spacing_var.get():.0f}%")
+    
+    def _on_show_radii_changed(self):
+        """Regenerate visualization when show radii checkbox changes"""
+        if self.rainbow is not None:
+            try:
+                fp_width = float(self.fp_width_var.get())
+                fp_height = float(self.fp_height_var.get())
+                margin = float(self.margin_var.get())
+                orientation = self.orientation_var.get()
+                paper_width = float(self.paper_width_var.get())
+                paper_height = float(self.paper_height_var.get())
+                
+                self.rainbow.render(self.ax, paper_width, paper_height, margin, 
+                                  orientation, self.show_radii_var.get())
+                self.canvas.draw()
+            except:
+                pass  # If there's an error, just don't update
         
     def _toggle_auto_paper(self):
         """Toggle automatic paper size selection"""
@@ -619,8 +720,12 @@ class FingerprintRainbowGUI:
                     f"Consider enabling auto-paper size or using larger paper.")
             
             # Render
-            self.rainbow.render(self.ax, paper_width, paper_height, margin, orientation)
+            self.rainbow.render(self.ax, paper_width, paper_height, margin, 
+                              orientation, self.show_radii_var.get())
             self.canvas.draw()
+            
+            # Get band radii
+            band_radii = self.rainbow.get_band_radii()
             
             # Update info
             info_text = (
@@ -636,12 +741,160 @@ class FingerprintRainbowGUI:
             for color, count in zip(FingerprintRainbow.COLORS, self.rainbow.allocations):
                 info_text += f"  {color.capitalize()}: {count}\n"
             
+            info_text += "\nBand Radii (inches):\n"
+            for color, inner, mid, outer in band_radii:
+                info_text += f"  {color.capitalize()}: {mid:.2f}\" (±{self.fp_width/2:.2f}\")\n"
+            
             self.info_label.config(text=info_text)
             
         except ValueError as e:
             messagebox.showerror("Error", f"Invalid input: {e}")
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred: {e}")
+    
+    def _generate_construction_sheet(self):
+        """Generate a construction reference sheet on 8.5x11 paper"""
+        if self.rainbow is None:
+            messagebox.showwarning("No Rainbow", 
+                                 "Please generate a rainbow first before creating a construction sheet.")
+            return
+        
+        try:
+            # Get current parameters
+            fp_width = float(self.fp_width_var.get())
+            fp_height = float(self.fp_height_var.get())
+            margin = float(self.margin_var.get())
+            band_spacing_percent = float(self.band_spacing_var.get())
+            min_inner = int(self.min_inner_var.get())
+            orientation = self.orientation_var.get()
+            paper_width = float(self.paper_width_var.get())
+            paper_height = float(self.paper_height_var.get())
+            paper_name = self.paper_size_var.get()
+            
+            # Create a new figure for the construction sheet
+            fig_sheet = plt.figure(figsize=(8.5, 11))
+            
+            # Title
+            fig_sheet.suptitle('Fingerprint Rainbow - Construction Reference Sheet', 
+                             fontsize=16, fontweight='bold', y=0.98)
+            
+            # Create grid layout
+            gs = fig_sheet.add_gridspec(3, 1, height_ratios=[1.2, 1.5, 0.8], 
+                                       hspace=0.3, top=0.94, bottom=0.05, 
+                                       left=0.08, right=0.92)
+            
+            # Section 1: Configuration Parameters
+            ax1 = fig_sheet.add_subplot(gs[0])
+            ax1.axis('off')
+            
+            params_text = (
+                "CONFIGURATION PARAMETERS\n\n"
+                f"Fingerprint Dimensions:\n"
+                f"  • Width (short axis): {fp_width:.3f} inches\n"
+                f"  • Height (long axis): {fp_height:.3f} inches\n\n"
+                f"Rainbow Configuration:\n"
+                f"  • Band Spacing: {band_spacing_percent:.0f}% of fingerprint height\n"
+                f"  • Minimum Inner Circle: {min_inner} fingerprints\n"
+                f"  • Total Fingerprints: 100\n\n"
+                f"Target Paper:\n"
+                f"  • Size: {paper_name}\n"
+                f"  • Dimensions: {paper_width:.2f}\" × {paper_height:.2f}\"\n"
+                f"  • Orientation: {orientation.capitalize()}\n"
+                f"  • Margins: {margin:.2f} inches\n"
+            )
+            
+            ax1.text(0, 1, params_text, 
+                    fontsize=10, verticalalignment='top',
+                    family='monospace',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+            
+            # Section 2: Scaled Rainbow Visualization
+            ax2 = fig_sheet.add_subplot(gs[1])
+            ax2.set_aspect('equal')
+            
+            # Calculate scale to fit on sheet
+            rainbow_width, rainbow_height = self.rainbow.calculate_dimensions()
+            available_width = 7.5  # inches on 8.5x11 with margins
+            available_height = 4.5  # inches
+            
+            scale_w = available_width / rainbow_width if rainbow_width > 0 else 1
+            scale_h = available_height / rainbow_height if rainbow_height > 0 else 1
+            scale = min(scale_w, scale_h, 1.0)  # Don't scale up
+            
+            # Render scaled rainbow
+            scaled_width = rainbow_width * scale
+            scaled_height = rainbow_height * scale
+            
+            ax2.set_xlim(0, available_width)
+            ax2.set_ylim(0, available_height)
+            
+            center_x = available_width / 2
+            center_y = 0.2
+            
+            # Draw each band at scale
+            for band_idx, (color, num_prints) in enumerate(zip(self.rainbow.COLORS, self.rainbow.allocations)):
+                band_from_center = 6 - band_idx
+                mid_radius = (self.rainbow.band_spacing / 2 + band_from_center * self.rainbow.band_spacing) * scale
+                inner_radius = mid_radius - (self.rainbow.fp_width / 2) * scale
+                outer_radius = mid_radius + (self.rainbow.fp_width / 2) * scale
+                
+                wedge = Wedge((center_x, center_y), outer_radius, 0, 180,
+                            width=(self.rainbow.fp_width * scale), 
+                            facecolor=color, alpha=0.4,
+                            edgecolor='black', linewidth=1)
+                ax2.add_patch(wedge)
+                
+                # Draw radius line and label
+                line_x = center_x + mid_radius
+                ax2.plot([center_x, line_x], [center_y, center_y], 
+                        color=color, linewidth=2, linestyle='-', alpha=0.8)
+                
+                label_x = center_x + mid_radius * 0.6
+                label_y = center_y + 0.15
+                ax2.text(label_x, label_y, f'{mid_radius/scale:.2f}"', 
+                        fontsize=8, ha='center', fontweight='bold',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor=color, linewidth=2))
+            
+            ax2.set_title(f'Scaled Diagram (Scale: {scale:.1%} of actual size)', 
+                         fontsize=11, fontweight='bold', pad=10)
+            ax2.set_xticks([])
+            ax2.set_yticks([])
+            
+            # Section 3: Band Details Table
+            ax3 = fig_sheet.add_subplot(gs[2])
+            ax3.axis('off')
+            
+            band_radii = self.rainbow.get_band_radii()
+            
+            table_text = "BAND SPECIFICATIONS\n" + "=" * 60 + "\n\n"
+            table_text += f"{'Band':<10} {'Color':<10} {'Fingerprints':<15} {'Radius (in)':<20}\n"
+            table_text += "-" * 60 + "\n"
+            
+            for idx, ((color, inner, mid, outer), count) in enumerate(zip(band_radii, self.rainbow.allocations)):
+                band_num = 7 - idx  # Outermost is 7, innermost is 1
+                table_text += f"Band {band_num:<3} {color.capitalize():<10} {count:<15} {mid:.3f} (±{self.rainbow.fp_width/2:.3f})\n"
+            
+            ax3.text(0, 1, table_text, 
+                    fontsize=9, verticalalignment='top',
+                    family='monospace',
+                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.3))
+            
+            # Save the construction sheet
+            output_path = "construction_sheet.pdf"
+            fig_sheet.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close(fig_sheet)
+            
+            messagebox.showinfo("Success", 
+                              f"Construction sheet generated!\n\n"
+                              f"Saved to: construction_sheet.pdf\n\n"
+                              f"This sheet contains:\n"
+                              f"• All configuration parameters\n"
+                              f"• Scaled diagram with radii\n"
+                              f"• Complete band specifications\n\n"
+                              f"Print on standard 8.5\" × 11\" paper for reference.")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate construction sheet: {e}")
 
 
 def main():
