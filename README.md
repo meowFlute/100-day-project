@@ -24,17 +24,7 @@ sudo apt upgrade -y
 
 2. **Install Python 3 and required system packages**:
 ```bash
-sudo apt install python3 python3-pip python3-tk -y
-```
-
-3. **Install Python dependencies**:
-```bash
-pip3 install -r requirements.txt
-```
-
-Alternatively, install packages individually:
-```bash
-pip3 install matplotlib numpy
+sudo apt install python3 python3-tk python3-matplotlib python3-numpy -y
 ```
 
 ## Usage
